@@ -1,0 +1,15 @@
+<html>
+    <h1>Webhook messages list: </h1>
+    <p>Max messages storage = 30</p>
+    <ol>
+    {{with .messages}}
+        {{range .}}
+            <li>
+               <p><b>Received time:</b> {{.CreatedAt}}</p>
+               <p><b>Payload:</b> {{.Payload}}</p>
+            </li>
+            <hr>
+        {{end}}
+    {{end}}
+    </ol>
+</html>
