@@ -19,30 +19,40 @@ type Message struct {
 	CreatedTimestamp int64       `json:"-"`
 }
 
-type Messages struct {
-	mu   sync.Mutex
-	Msgs []Message
-}
+const (
+	maxMsgPerPath = 30
+)
 
 func main() {
 	router := gin.New()
 	router.LoadHTMLFiles("./index.html")
 
-	msgs := Messages{}
-	maxMsg := 30
+	rootPath := struct {
+		mu   sync.Mutex
+		Msgs []Message
+	}{}
+
+	customPaths := struct {
+		mu sync.Mutex
+		m  map[string][]Message
+	}{
+		m: make(map[string][]Message),
+	}
 
 	router.Use(
 		gin.Logger(),
 	)
 
-	router.GET("/", func(c *gin.Context) {
+	router.GET("/:custom_path", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", gin.H{
-			"messages": msgs.Msgs,
+			"path":     c.Param("custom_path"),
+			"messages": customPaths.m[c.Param("custom_path")],
 		})
 	})
 
-	router.POST("/", func(c *gin.Context) {
-		now := time.Now()
+	router.POST("/:custom_path", func(c *gin.Context) {
+		key := c.Param("custom_path")
+
 		data, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			fmt.Println("err", err.Error())
@@ -51,25 +61,41 @@ func main() {
 			return
 		}
 
-		msg := Message{
-			Payload:          string(data),
-			CreatedAt:        now.Format(time.ANSIC),
-			CreatedTimestamp: now.Unix(),
-		}
+		msg := createMsg(data)
 
-		msgs.mu.Lock()
-		msgs.Msgs = append(msgs.Msgs, msg)
+		customPaths.mu.Lock()
 
-		sort.Slice(msgs.Msgs, func(i, j int) bool {
-			return msgs.Msgs[i].CreatedTimestamp > msgs.Msgs[j].CreatedTimestamp
+		customPathMsgs := customPaths.m[key]
+		customPaths.m[key] = addMsg(customPathMsgs, msg)
+
+		customPaths.mu.Unlock()
+
+		c.JSON(http.StatusOK, gin.H{})
+	})
+
+	router.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"path":     "",
+			"messages": rootPath.Msgs,
 		})
+	})
 
-		// remove old msgs
-		if len(msgs.Msgs) > maxMsg {
-			msgs.Msgs = msgs.Msgs[:maxMsg]
+	router.POST("/", func(c *gin.Context) {
+		data, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			fmt.Println("err", err.Error())
+			c.JSON(http.StatusOK, gin.H{})
+
+			return
 		}
 
-		msgs.mu.Unlock()
+		msg := createMsg(data)
+
+		rootPath.mu.Lock()
+
+		rootPath.Msgs = addMsg(rootPath.Msgs, msg)
+
+		rootPath.mu.Unlock()
 
 		c.JSON(http.StatusOK, gin.H{})
 	})
@@ -84,4 +110,29 @@ func main() {
 	}
 
 	router.Run(":" + port)
+}
+
+func addMsg(msgs []Message, newMsg Message) []Message {
+	msgs = append(msgs, newMsg)
+
+	sort.Slice(msgs, func(i, j int) bool {
+		return msgs[i].CreatedTimestamp > msgs[j].CreatedTimestamp
+	})
+
+	// remove old msgs
+	if len(msgs) > maxMsgPerPath {
+		msgs = msgs[:maxMsgPerPath]
+	}
+
+	return msgs
+}
+
+func createMsg(data []byte) Message {
+	now := time.Now()
+
+	return Message{
+		Payload:          string(data),
+		CreatedAt:        now.Format(time.ANSIC),
+		CreatedTimestamp: now.Unix(),
+	}
 }
